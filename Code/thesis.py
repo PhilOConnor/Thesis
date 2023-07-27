@@ -4,679 +4,370 @@
 # In[1]:
 
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.optim import lr_scheduler
-import torchvision
-from torch.autograd import Variable
-from torchvision import datasets, models, transforms
-#from torcheval.metrics.functional import multiclass_f1_score
 import os
 import numpy as np
-import random
 import pandas as pd
+import matplotlib.pyplot as plt
+import tensorflow as tf
+import tensorflow_addons as tfa
+from mpl_toolkits.axes_grid1 import ImageGrid
+import random
+import shutil
+from numba import cuda 
+device = cuda.get_current_device()
+
+
 
 
 # In[2]:
-# Input Params
-train_data = 'medium_data_path'
-num_epoch = 100
-learning_rate = 0.001
-lr_step = 10
+
 
 data_path = '../Data/full dataset'
-medium_data_path = '../Data/Small Dataset 1000'
-extra_small_data_path = '../Data/Small Dataset 200'
+data_path_1000 = '../Data/Dataset 1000/train'
+data_path_800 = '../Data/Dataset 800/train'
+data_path_200 = '../Data/Dataset 200/train'
+val_data_path = '../Data/validation dataset/'
 figures_output_path = '../Outputs/figures'
 csv_outputs ='../Outputs/csv'
 models_output_path = '../Models'
 model_checkpoints_path = '../Models/checkpoints'
 
 
-
-datasetsizes ={'extra_small_data_path':200, 'medium_data_path':1000}
-
-
-
-# If output folder exists, dont create a new one, if does not exits then create it
-try:
-    os.listdir(os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}"))
-except:
-    os.mkdir(os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}"))
-
-try:
-    os.listdir(os.path.join(csv_outputs, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}"))
-except:
-    os.mkdir(os.path.join(csv_outputs,f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}"))
+# In[3]:
+device.reset()
 
 
-load_checkpoints=False
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+  try:
+    # Currently, memory growth needs to be the same across GPUs
+    for gpu in gpus:
+      tf.config.experimental.set_memory_growth(gpu, True)
+    logical_gpus = tf.config.list_logical_devices('GPU')
+    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+  except RuntimeError as e:
+    # Memory growth must be set before GPUs have been initialized
+    print(e)
 
 
-# Create transforms
-data_transforms = {'train': transforms.Compose([
-        transforms.Resize((300, 300)),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]),
-                   'val': transforms.Compose([
-                      transforms.Resize((300, 300)),
-                      transforms.ToTensor(),
-                      transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]),
-                   'test': transforms.Compose([
-                      transforms.Resize((300,300)),
-                      transforms.ToTensor(),
-                      transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])}
+# In[4]:
+
+
+# Data parameters
+batch_size = 4
+img_height = 224
+img_width = 224
+n_classes=5
 
 
 
+# Model Parameters
+lr_sched_trigger=5
 
-# Create datasets
-image_datasets = {x:datasets.ImageFolder(os.path.join(data_path, x), data_transforms[x]) for x in [ 'val', 'test']}
-image_datasets['train'] = datasets.ImageFolder(os.path.join(medium_data_path,'train'), data_transforms['train'])
-
-
-
-# Data loaders
-dataloaders = {x:torch.utils.data.DataLoader(image_datasets[x], batch_size=16, shuffle=True) for x in ['train', 'val', 'test']}
-
-dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val', 'test']}
-class_names = image_datasets['train'].classes
+# In[5]:
 
 
-print(f"Classes in the dataset are:{class_names}")
+train_ds = tf.keras.utils.image_dataset_from_directory(
+  data_path_200,
+  seed=123,
+  image_size=(img_height, img_width),
+  batch_size=batch_size)
 
-print(f"Num batches in training dataset:{len(dataloaders['train'])}")
-print(f"Num images in training dataset:{dataset_sizes['train']}")
+val_ds = tf.keras.utils.image_dataset_from_directory(
+  val_data_path,
+  seed=123,
+  image_size=(img_height, img_width),
+  batch_size=batch_size)
 
-print(f"Num batches in val dataset:{len(dataloaders['val'])}")
-print(f"Num images in val dataset:{dataset_sizes['val']}")
-
-print(f"Num batches in test dataset:{len(dataloaders['test'])}")
-print(f"Num images in test dataset:{dataset_sizes['test']}")
-print(f"GPU: {torch.cuda.get_device_name(0)}")
-
-
-
-###############################
-# Resnet 18 
-
-###############################
-
-model_conv = torchvision.models.resnet18(weights='ResNet18_Weights.IMAGENET1K_V1')
-# Dont store gradients in the pretrained layers
-for param in model_conv.parameters():
-    param.required_grad=False
-# Replace final layer with new one with 5 output nodes
-n_inputs = model_conv.fc.in_features
-model_conv.fc= nn.Linear(in_features=n_inputs, out_features=len(class_names))
-
-if load_checkpoints==True:
-	checkpoint = torch.load(os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}",f'ResNet18_{datasetsizes[train_data]}.pt' ))
-	model_conv.load_state_dict(checkpoint['model_state_dict'])
-	optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-	epoch = checkpoint['epoch']
-	loss = checkpoint['loss']
-else:
-	pass
+test_ds = tf.keras.utils.image_dataset_from_directory(
+  os.path.join(data_path,'test'),
+  seed=123,
+  image_size=(img_height, img_width),
+  batch_size=batch_size)
 
 
-# move to GPU if available
-if torch.cuda.is_available():
-    model_conv.cuda()
+# In[6]:
+
+
+def preprocess(image, label):
+    normalise = tf.cast(image, tf.float32) / 255
     
-# Set up loss function and optimiser
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model_conv.fc.parameters(), lr=learning_rate, momentum=0.9)
-exp_lr_sch = lr_scheduler.StepLR(optimizer, step_size=lr_step, gamma=0.1)
-
-
-
-train_loss=[]
-train_accuracy=[]
-val_loss=[]
-val_accuracy=[]
-
-for epoch in range(num_epoch):
-    exp_lr_sch.step()
-    iterations=0
-    iter_loss=0.0
-    correct=0
-
-    model_conv.train()
-
-    for images, labels in dataloaders['train']:
-        images = Variable(images)
-        labels=Variable(labels)
-        if torch.cuda.is_available():
-            images=images.cuda()
-            labels=labels.cuda()
-
-        optimizer.zero_grad()
-        outputs= model_conv(images)
-        loss=criterion(outputs, labels)
-        iter_loss+=loss.item()
-        loss.backward()
-        optimizer.step()
-        _, predicted = torch.max(outputs,1)
-        correct+=(predicted==labels).sum()
-        iterations+=1
-
-    train_loss.append(iter_loss/iterations)
-    train_iter_acc = 100*correct/dataset_sizes['train']
-    train_accuracy.append(train_iter_acc)
-    print(f"Epoch {epoch+1}/{num_epoch}, Loss {loss.item()}, train accuracy {train_iter_acc}")
-    
-    torch.save({
-            'epoch': epoch,
-            'model_state_dict': model_conv.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': loss,
-            }, os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'ResNet18_{datasetsizes[train_data]}.pt'))
-
-    if epoch%5==0:
-        model_conv.eval()
-        test_loss=0.0
-        correct=0
-        iterations=0
-
-        for images, labels in dataloaders['val']:
-            images = Variable(images)
-            labels=Variable(labels)
-            if torch.cuda.is_available():
-                images=images.cuda()
-                labels=labels.cuda()
-
-
-            outputs = model_conv(images)
-            loss=criterion(outputs, labels)
-            iter_loss+=loss.item()
-            _, predicted = torch.max(outputs,1)
-            correct+=(predicted==labels).sum()
-            iterations+=1
-
-        val_acc = 100*correct/dataset_sizes['val']
-        print(f"ResNet18 - Epoch {epoch+1}/{num_epoch}, Loss {loss.item()}, val accuracy {val_acc}")
-        val_loss.append(iter_loss/iterations)
-        val_iter_acc = 100*correct/dataset_sizes['val']
-        val_accuracy.append(val_iter_acc)
-    else:
-        pass
-train_accuracy = [i.item() for i in train_accuracy]
-val_accuracy = [i.item() for i in val_accuracy]
-pd.DataFrame([train_loss, train_accuracy, val_loss, val_accuracy]).to_excel(os.path.join(csv_outputs, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}",f'ResNet18_{datasetsizes[train_data]}_stats.xlsx'))
-pd.DataFrame([predicted, labels]).to_excel(os.path.join(csv_outputs, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'ResNet18_{datasetsizes[train_data]}_outputs.xlsx'))
-
-
-###############################
-# ResNet 50
-# Use V2 weights as they are an improvement over V1 weights
-###############################
-
-
-model_conv = torchvision.models.resnet50(weights='ResNet50_Weights.IMAGENET1K_V2')
-# Dont store gradients in the pretrained layers
-for param in model_conv.parameters():
-    param.required_grad=False
-# Replace final layer with new one with 5 output nodes
-n_inputs = model_conv.fc.in_features
-model_conv.fc= nn.Linear(in_features=n_inputs, out_features=len(class_names))
-
-if load_checkpoints==True:
-	checkpoint = torch.load(os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}",f'ResNet50_{datasetsizes[train_data]}.pt' ))
-	model_conv.load_state_dict(checkpoint['model_state_dict'])
-	optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-	epoch = checkpoint['epoch']
-	loss = checkpoint['loss']
-else:
-	pass
-
-# move to GPU if available
-if torch.cuda.is_available():
-    model_conv.cuda()
-    
-    
-# Set up loss function and optimiser
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model_conv.fc.parameters(), lr=learning_rate, momentum=0.9)
-exp_lr_sch = lr_scheduler.StepLR(optimizer, step_size=lr_step, gamma=0.1)
+    final_image = normalise
+    return final_image, label
 
+def xception_preprocess(image, label):
+    normalise = tf.cast(image, tf.float32) / 255
+    final_image = tf.keras.applications.xception.preprocess_input(normalise)
+    final_image = normalise
+    return final_image, label
 
-
-train_loss=[]
-train_accuracy=[]
-val_loss=[]
-val_accuracy=[]
-
-for epoch in range(num_epoch):
-    exp_lr_sch.step()
-    iterations=0
-    iter_loss=0.0
-    correct=0
+def lr_scheduler(epoch, lr):
+  if epoch<lr_sched_trigger:
+    return lr
+  elif epoch%10 ==0| epoch ==lr_sched_trigger :
+    lr= lr * tf.math.exp(-0.1)
+    return lr
+  else:
+    return lr
 
-    model_conv.train()
-
-    for images, labels in dataloaders['train']:
-        images = Variable(images)
-        labels=Variable(labels)
-        if torch.cuda.is_available():
-            images=images.cuda()
-            labels=labels.cuda()
 
-        optimizer.zero_grad()
-        outputs= model_conv(images)
-        loss=criterion(outputs, labels)
-        iter_loss+=loss.item()
-        loss.backward()
-        optimizer.step()
-        _, predicted = torch.max(outputs,1)
-        correct+=(predicted==labels).sum()
-        iterations+=1
+optimizer1= tf.keras.optimizers.Adam(
+    learning_rate=0.001,
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-07
+)
 
-    train_loss.append(iter_loss/iterations)
-    train_iter_acc = 100*correct/dataset_sizes['train']
-    train_accuracy.append(train_iter_acc)
-    print(f"Epoch {epoch+1}/{num_epoch}, Loss {loss.item()}, train accuracy {train_iter_acc}")
-    torch.save({
-    	'epoch': epoch,
-	'model_state_dict': model_conv.state_dict(),
-	'optimizer_state_dict': optimizer.state_dict(),
-	'loss': loss,
-	}, os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'ResNet50_{datasetsizes[train_data]}.pt'))
+optimizer2= tf.keras.optimizers.Adam(
+    learning_rate=0.0001,
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-07
+)
 
-    if epoch%5==0:
-        model_conv.eval()
-        test_loss=0.0
-        correct=0
-        iterations=0
+###########
 
-        for images, labels in dataloaders['val']:
-            images = Variable(images)
-            labels=Variable(labels)
-            if torch.cuda.is_available():
-                images=images.cuda()
-                labels=labels.cuda()
-
-
-            outputs = model_conv(images)
-            loss=criterion(outputs, labels)
-            iter_loss+=loss.item()
-            _, predicted = torch.max(outputs,1)
-            correct+=(predicted==labels).sum()
-            iterations+=1
-
-        val_acc = 100*correct/dataset_sizes['val']
-        print(f"Resnet50 - Epoch {epoch+1}/{num_epoch}, Loss {loss.item()}, val accuracy {val_acc}")
-        val_loss.append(iter_loss/iterations)
-        val_iter_acc = 100*correct/dataset_sizes['val']
-        val_accuracy.append(val_iter_acc)
-    else:
-        pass
-
-
-train_accuracy = [i.item() for i in train_accuracy]
-val_accuracy = [i.item() for i in val_accuracy]
-pd.DataFrame([train_loss, train_accuracy, val_loss, val_accuracy]).to_excel(os.path.join(csv_outputs, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'ResNet50_{datasetsizes[train_data]}_stats.xlsx'))
-pd.DataFrame([predicted, labels]).to_excel(os.path.join(csv_outputs, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'ResNet50_{datasetsizes[train_data]}_outputs.xlsx'))
-
-
-
-
-
-
-###############################
-# Inception V3
-
-###############################
-
-
-#load model
-
-model_conv = torchvision.models.inception_v3(weights='Inception_V3_Weights.IMAGENET1K_V1')
-
-# Freeze layers in the model to prevent disturbing the weights
-for param in model_conv.parameters():
-    param.required_grad=False
-
-
-# Replace final layer with new one with 5 output nodes
-n_inputs = model_conv.fc.in_features
-model_conv.fc= nn.Linear(in_features=n_inputs, out_features=len(class_names))
-
-if load_checkpoints==True:
-	checkpoint = torch.load(os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}",f'InceptionV3_{datasetsizes[train_data]}.pt' ))
-	model_conv.load_state_dict(checkpoint['model_state_dict'])
-	optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-	epoch = checkpoint['epoch']
-	loss = checkpoint['loss']
-else:
-	pass
-
-
-if torch.cuda.is_available():
-    model_conv.cuda()
-
-
-
-    # Set up loss function and optimiser
-
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model_conv.fc.parameters(), lr=learning_rate, momentum=0.9)
-
-    exp_lr_sch = lr_scheduler.StepLR(optimizer, step_size=lr_step, gamma=0.1)
+#ResNet 18
 
-    train_loss=[]
-    train_accuracy=[]
-    val_loss=[]
-    val_accuracy=[]
-    
-    train_loss=[]
-    train_accuracy=[]
-    val_loss=[]
-    val_accuracy=[]
-
-    for epoch in range(num_epoch):
-        exp_lr_sch.step()
-        iterations=0
-        iter_loss=0.0
-        correct=0
-
-        model_conv.train()
-
-        for images, labels in dataloaders['train']:
-            images = Variable(images)
-            labels=Variable(labels)
-            if torch.cuda.is_available():
-                images=images.cuda()
-                labels=labels.cuda()
-
-            optimizer.zero_grad()
-            outputs,_= model_conv(images)
-            loss=criterion(outputs, labels)
-            iter_loss+=loss.item()
-            loss.backward()
-            optimizer.step()
-            _, predicted = torch.max(outputs,1)
-            correct+=(predicted==labels).sum()
-            iterations+=1
-
-        train_loss.append(iter_loss/iterations)
-        train_iter_acc = 100*correct/dataset_sizes['train']
-        train_accuracy.append(train_iter_acc)
-        print(f"Epoch {epoch+1}/{num_epoch}, Loss {loss.item()}, train accuracy {train_iter_acc}")
-
-        torch.save({
-                'epoch': epoch,
-                'model_state_dict': model_conv.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': loss,
-                }, os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'InceptionV3_{datasetsizes[train_data]}.pt'))
-        if epoch%5==0:
-            model_conv.eval()
-            test_loss=0.0
-            correct=0
-            iterations=0
-
-            for images, labels in dataloaders['val']:
-                images = Variable(images)
-                labels=Variable(labels)
-                if torch.cuda.is_available():
-                    images=images.cuda()
-                    labels=labels.cuda()
-
-
-                outputs= model_conv(images)
-                loss=criterion(outputs, labels)
-                iter_loss+=loss.item()
-                _, predicted = torch.max(outputs,1)
-                correct+=(predicted==labels).sum()
-                iterations+=1
-
-            val_acc = 100*correct/dataset_sizes['val']
-            print(f"InceptionV3 - Epoch {epoch+1}/{num_epoch}, Loss {loss.item()}, val accuracy {val_acc}")
-            val_loss.append(iter_loss/iterations)
-            val_iter_acc = 100*correct/dataset_sizes['val']
-            val_accuracy.append(val_iter_acc)
-        else:
-            pass
-
-
-
-
-
-    train_accuracy = [i.item() for i in train_accuracy]
-    val_accuracy = [i.item() for i in val_accuracy]
-    pd.DataFrame([train_loss, train_accuracy, val_loss, val_accuracy]).to_excel(os.path.join(csv_outputs, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'InceptionV3_{datasetsizes[train_data]}_stats.xlsx'))
-    pd.DataFrame([predicted, labels]).to_excel(os.path.join(csv_outputs, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'InceptionV3_{datasetsizes[train_data]}_outputs.xlsx'))
-
-
-    ###############################
-    # VGG16 
-
-    ###############################
-
-    model_conv = torchvision.models.vgg16(weights='VGG16_Weights.IMAGENET1K_V1')
-    # Dont store gradients in the pretrained layers
-    for param in model_conv.parameters():
-        param.required_grad=False
-    # Replace final layer with new one with 5 output nodes
-
-
-    model_conv.classifier[-1] = nn.Linear(in_features=4096, out_features=len(class_names))
-
-    if load_checkpoints==True:
-        checkpoint = torch.load(os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}",f'VGG16_{datasetsizes[train_data]}.pt' ))
-        model_conv.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        epoch = checkpoint['epoch']
-        loss = checkpoint['loss']
-    else:
-        pass
-
-
-    # move to GPU if available
-    if torch.cuda.is_available():
-        model_conv.cuda()
-        
-    # Set up loss function and optimiser
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model_conv.classifier.parameters(), lr=learning_rate, momentum=0.9)
-    exp_lr_sch = lr_scheduler.StepLR(optimizer, step_size=lr_step, gamma=0.1)
-
-
-
-    train_loss=[]
-    train_accuracy=[]
-    val_loss=[]
-    val_accuracy=[]
-
-    for epoch in range(num_epoch):
-        exp_lr_sch.step()
-        iterations=0
-        iter_loss=0.0
-        correct=0
-
-        model_conv.train()
-
-        for images, labels in dataloaders['train']:
-            images = Variable(images)
-            labels=Variable(labels)
-            if torch.cuda.is_available():
-                images=images.cuda()
-                labels=labels.cuda()
-
-            optimizer.zero_grad()
-            outputs= model_conv(images)
-            loss=criterion(outputs, labels)
-            iter_loss+=loss.item()
-            loss.backward()
-            optimizer.step()
-            _, predicted = torch.max(outputs,1)
-            correct+=(predicted==labels).sum()
-            iterations+=1
-
-        train_loss.append(iter_loss/iterations)
-        train_iter_acc = 100*correct/dataset_sizes['train']
-        train_accuracy.append(train_iter_acc)
-        print(f"Epoch {epoch+1}/{num_epoch}, Loss {loss.item()}, train accuracy {train_iter_acc}")
-        
-        torch.save({
-                'epoch': epoch,
-                'model_state_dict': model_conv.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': loss,
-                }, os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'VGG16_{datasetsizes[train_data]}.pt'))
-
-        if epoch%5==0:
-            model_conv.eval()
-            test_loss=0.0
-            correct=0
-            iterations=0
-
-            for images, labels in dataloaders['val']:
-                images = Variable(images)
-                labels=Variable(labels)
-                if torch.cuda.is_available():
-                    images=images.cuda()
-                    labels=labels.cuda()
-
-
-                outputs = model_conv(images)
-                loss=criterion(outputs, labels)
-                iter_loss+=loss.item()
-                _, predicted = torch.max(outputs,1)
-                correct+=(predicted==labels).sum()
-                iterations+=1
-
-            val_acc = 100*correct/dataset_sizes['val']
-            print(f"VGG16 - Epoch {epoch+1}/{num_epoch}, Loss {loss.item()}, val accuracy {val_acc}")
-            val_loss.append(iter_loss/iterations)
-            val_iter_acc = 100*correct/dataset_sizes['val']
-            val_accuracy.append(val_iter_acc)
-        else:
-            pass
-    train_accuracy = [i.item() for i in train_accuracy]
-    val_accuracy = [i.item() for i in val_accuracy]
-    pd.DataFrame([train_loss, train_accuracy, val_loss, val_accuracy]).to_excel(os.path.join(csv_outputs, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}",f'VGG16_{datasetsizes[train_data]}_stats.xlsx'))
-    pd.DataFrame([predicted, labels]).to_excel(os.path.join(csv_outputs, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'VGG16_{datasetsizes[train_data]}_outputs.xlsx'))
-    os.system('sudo shutdown 5 -h')
-
-    ###############################
-    # EfficientNet Small
-    # Small model is used for GPU RAM constraints
-    ###############################
-    # Reduce batch size for GPU RAM constraint
-    dataloaders = {x:torch.utils.data.DataLoader(image_datasets[x], batch_size=4, shuffle=True) for x in ['train', 'val', 'test']}
-
-    
-    model_conv = torchvision.models.efficientnet_v2_s(weights='EfficientNet_V2_S_Weights.IMAGENET1K_V1')
-    # Dont store gradients in the pretrained layers
-    for param in model_conv.parameters():
-        param.required_grad=False
-    # Replace final layer with new one with 5 output nodes
-    model_conv.classifier[-1] = nn.Linear(in_features=1280, out_features=len(class_names))
-
-    if load_checkpoints==True:
-        checkpoint = torch.load(os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}",f'EfficientNet_{datasetsizes[train_data]}.pt' ))
-        model_conv.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        epoch = checkpoint['epoch']
-        loss = checkpoint['loss']
-    else:
-        pass
-
-    # move to GPU if available
-    if torch.cuda.is_available():
-        model_conv.cuda()
-        
-        
-    # Set up loss function and optimiser
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model_conv.classifier.parameters(), lr=learning_rate, momentum=0.9)
-    exp_lr_sch = lr_scheduler.StepLR(optimizer, step_size=lr_step, gamma=0.1)
-
-
-
-    train_loss=[]
-    train_accuracy=[]
-    val_loss=[]
-    val_accuracy=[]
-
-    for epoch in range(num_epoch):
-        exp_lr_sch.step()
-        iterations=0
-        iter_loss=0.0
-        correct=0
-
-        model_conv.train()
-
-        for images, labels in dataloaders['train']:
-            images = Variable(images)
-            labels=Variable(labels)
-            if torch.cuda.is_available():
-                images=images.cuda()
-                labels=labels.cuda()
-
-            optimizer.zero_grad()
-            outputs= model_conv(images)
-            loss=criterion(outputs, labels)
-            iter_loss+=loss.item()
-            loss.backward()
-            optimizer.step()
-            _, predicted = torch.max(outputs,1)
-            correct+=(predicted==labels).sum()
-            iterations+=1
-
-        train_loss.append(iter_loss/iterations)
-        train_iter_acc = 100*correct/dataset_sizes['train']
-        train_accuracy.append(train_iter_acc)
-        print(f"Epoch {epoch+1}/{num_epoch}, Loss {loss.item()}, train accuracy {train_iter_acc}")
-        torch.save({
-            'epoch': epoch,
-        'model_state_dict': model_conv.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'loss': loss,
-        }, os.path.join(model_checkpoints_path, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'EfficientNet_{datasetsizes[train_data]}.pt'))
-
-        if epoch%5==0:
-            model_conv.eval()
-            test_loss=0.0
-            correct=0
-            iterations=0
-
-            for images, labels in dataloaders['val']:
-                images = Variable(images)
-                labels=Variable(labels)
-                if torch.cuda.is_available():
-                    images=images.cuda()
-                    labels=labels.cuda()
-
-
-                outputs = model_conv(images)
-                loss=criterion(outputs, labels)
-                iter_loss+=loss.item()
-                _, predicted = torch.max(outputs,1)
-                correct+=(predicted==labels).sum()
-                iterations+=1
-
-            val_acc = 100*correct/dataset_sizes['val']
-            print(f"EfficientNet - Epoch {epoch+1}/{num_epoch}, Loss {loss.item()}, val accuracy {val_acc}")
-            val_loss.append(iter_loss/iterations)
-            val_iter_acc = 100*correct/dataset_sizes['val']
-            val_accuracy.append(val_iter_acc)
-        else:
-            pass
-
-
-    train_accuracy = [i.item() for i in train_accuracy]
-    val_accuracy = [i.item() for i in val_accuracy]
-    pd.DataFrame([train_loss, train_accuracy, val_loss, val_accuracy]).to_excel(os.path.join(csv_outputs, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}", f'EfficientNet_{datasetsizes[train_data]}_stats.xlsx'))
-    pd.DataFrame([predicted, labels]).to_excel(os.path.join(csv_outputs, f'Dataset {datasetsizes[train_data]}',f"LR_{learning_rate}",f'EfficientNet_{datasetsizes[train_data]}_outputs.xlsx'))
-
-
-
-
-
-else:
-    print("Issue with cuda")
+
+###########
+
+
+
+train_ds = train_ds.map(preprocess).prefetch(1)
+val_ds = val_ds.map(preprocess).prefetch(1)
+test_ds = test_ds.map(preprocess).prefetch(1)
+
+
+# In[8]:
+
+
+AUTOTUNE = tf.data.AUTOTUNE
+
+
+
+train_ds = train_ds.cache().prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
+
+
+
+
+# Model Callbacks
+checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, 'Resnet18.h5'),
+  save_best_only=True) 
+early_stopping_cb = tf.keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True)
+lr_cb = tf.keras.callbacks.LearningRateScheduler(lr_scheduler)
+
+
+
+base_model = tf.keras.applications.VGG16(weights='imagenet', include_top=False, input_shape=(img_height, img_width,3))
+flatten = tf.keras.layers.Flatten()(base_model.output)
+fc1 = tf.keras.layers.Dense(1024, 'relu')(flatten)
+do1 = tf.keras.layers.Dropout(.2)(fc1)
+#pool = tf.keras.layers.GlobalAveragePooling2D()(base_model.output)
+output = tf.keras.layers.Dense(n_classes, activation='softmax')(do1)
+model=tf.keras.Model(inputs=base_model.input, outputs=output)
+
+
+# In[10]:
+
+
+for layer in base_model.layers:
+    layer.trainable=False
+
+
+# In[11]:
+
+
+
+
+model.compile(
+  optimizer=optimizer1,
+  loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+  metrics=['accuracy' ])
+
+
+# In[ ]:
+
+
+history = model.fit(
+  train_ds,
+  validation_data=val_ds,
+  epochs=10,
+  callbacks=[checkpoint_cb, early_stopping_cb, lr_cb]
+)
+
+full_training_hist = pd.DataFrame(history.history)
+## Allow fine tuning
+for layer in base_model.layers[-6:]:
+    layer.trainable=True
+
+
+
+
+model.compile(
+  optimizer=optimizer2,
+  loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+  metrics=['accuracy'])
+
+
+# In[ ]:
+
+
+history = model.fit(
+  train_ds,
+  validation_data=val_ds,
+  epochs=5,
+  callbacks=[checkpoint_cb, early_stopping_cb, lr_cb]
+)
+
+full_training_hist.append(history.history)
+# In[ ]:
+
+
+# summarize history for accuracy
+plt.subplot(1,2,1)
+plt.plot(full_training_hist['accuracy'])
+plt.plot(full_training_hist['val_accuracy'])
+plt.title('model accuracy')
+plt.ylabel('accuracy')
+plt.xlabel('epoch')
+plt.legend(['train', 'test'], loc='upper left')
+plt.subplot(1,2,2)
+# summarize history for loss
+plt.plot(full_training_hist['loss'])
+plt.plot(full_training_hist['val_loss'])
+plt.title('model loss')
+plt.ylabel('loss')
+plt.xlabel('epoch')
+plt.legend(['train', 'val'], loc='lower right')
+plt.savefig('Xception 200 images per class.jpg')
+
+
+
+device.reset()
+
+
+"""
+
+###########
+"""
+#Xception
+
+"""
+##########
+
+train_ds = train_ds.map(xception_preprocess).prefetch(1)
+val_ds = val_ds.map(xception_preprocess).prefetch(1)
+test_ds = test_ds.map(xception_preprocess).prefetch(1)
+
+
+# In[8]:
+
+
+AUTOTUNE = tf.data.AUTOTUNE
+
+#train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
+#val_ds = val_ds.prefetch(buffer_size=AUTOTUNE)
+
+train_ds = train_ds.cache().prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
+
+
+# In[9]:
+
+
+base_model = tf.keras.applications.xception.Xception(weights='imagenet', include_top=False)
+pool = tf.keras.layers.GlobalAveragePooling2D()(base_model.output)
+output = tf.keras.layers.Dense(n_classes, activation='softmax')(pool)
+model=tf.keras.Model(inputs=base_model.input, outputs=output)
+
+
+# In[10]:
+
+
+for layer in base_model.layers:
+    layer.trainable=False
+
+
+# In[11]:
+
+
+optimizer= tf.keras.optimizers.Adam(
+    learning_rate=0.001,
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-07
+)
+
+model.compile(
+  optimizer=optimizer,
+  loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+  metrics=['accuracy' ])
+
+
+# In[ ]:
+
+
+history = model.fit(
+  train_ds,
+  validation_data=val_ds,
+  epochs=10
+)
+
+
+## Allow fine tuning
+for layer in base_model.layers:
+    layer.trainable=True
+
+
+optimizer= tf.keras.optimizers.Adam(
+    learning_rate=0.001,
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-07
+)
+
+model.compile(
+  optimizer=optimizer,
+  loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+  metrics=['accuracy'])
+
+
+# In[ ]:
+
+
+history = model.fit(
+  train_ds,
+  validation_data=val_ds,
+  epochs=5
+)
+
+
+# In[ ]:
+
+
+# summarize history for accuracy
+plt.subplot(1,2,1)
+plt.plot(history.history['accuracy'])
+plt.plot(history.history['val_accuracy'])
+plt.title('model accuracy')
+plt.ylabel('accuracy')
+plt.xlabel('epoch')
+plt.legend(['train', 'test'], loc='upper left')
+plt.subplot(1,2,2)
+# summarize history for loss
+plt.plot(history.history['loss'])
+plt.plot(history.history['val_loss'])
+plt.title('model loss')
+plt.ylabel('loss')
+plt.xlabel('epoch')
+plt.legend(['train', 'val'], loc='lower right')
+plt.savefig('Xception 200 images per class.jpg')
+
+
+# In[ ]:
+
+
+"""
+
