@@ -28,6 +28,7 @@ data_path = '../Data/full dataset'
 data_path_1000 = '../Data/Dataset 1000/train'
 data_path_800 = '../Data/Dataset 800/train'
 data_path_200 = '../Data/Dataset 200/train'
+data_path_500 = '../Data/Dataset 500/train'
 val_data_path = '../Data/validation dataset/'
 figures_output_path = '../Outputs/figures'
 csv_output_path ='../Outputs/csv'
@@ -58,10 +59,10 @@ if gpus:
 # Data parameters
 load_batch_size = 4
 batch_size = 8
-load_img_height = 224
-load_img_width = 224
-img_height = 224
-img_width = 224
+load_img_height = 512
+load_img_width = 512
+img_height = 512
+img_width = 512
 n_classes=5
 
 val_ds = tf.keras.utils.image_dataset_from_directory(
@@ -84,15 +85,15 @@ test_ds = test_ds.prefetch(buffer_size=AUTOTUNE)
 
 
 
-for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_800, data_path_1000]):
+for iter_lr, iter_path in itertools.product([0.001,], [data_path_500]):
 
   # Model Parameters
   #learning_rate1 = 0.01
   learning_rate1 = iter_lr
-  learning_rate2 = 0.0001
+  learning_rate2 = 0.001
 
-  lr_sched_trigger=20
-  epoch1 = 100
+  lr_sched_trigger=1000
+  epoch1 = 5
   epoch2 = 100
 
   # In[5]:
@@ -158,17 +159,20 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   )
   """
 
-  early_stopping_cb = tf.keras.callbacks.EarlyStopping(patience=5,min_delta=0.001, start_from_epoch=10)
+  early_stopping_cb = tf.keras.callbacks.EarlyStopping(patience=20,min_delta=0.001, start_from_epoch=10)
   lr_cb = tf.keras.callbacks.LearningRateScheduler(
       lr_scheduler, verbose=0
   )
 
 
   data_augmentations = tf.keras.Sequential([
-    tf.keras.layers.CenterCrop(img_height, img_width),
-    tf.keras.layers.RandomFlip(mode='horizontal'),
-    tf.keras.layers.RandomRotation(0.2),
-    tf.keras.layers.RandomContrast((0.01, 0.1))
+    #tf.keras.layers.CenterCrop(img_height, img_width),
+    tf.keras.layers.RandomRotation(1),
+    tf.keras.layers.RandomTranslation(height_factor=0.15, width_factor=0.15),
+    tf.keras.layers.Rescaling(scale=0.1),
+    tf.keras.layers.RandomFlip(mode='horizontal_and_vertical')
+    
+    
     ])
 
 
@@ -179,7 +183,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
   ###########
 
-  
+  """
 
 
   #train_ds = train_ds.map(preprocess).cache()
@@ -205,7 +209,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
   # Model Callbacks
-  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'VGG16_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
+  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'VGG16_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
     save_best_only=True) 
 
 
@@ -300,7 +304,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   plt.xlabel('epoch')
   plt.legend(['train', 'val','fine-tuning'], loc='lower right')
   plt.tight_layout()
-  plt.savefig(os.path.join(figures_output_path, 'graphs',f'VGG16_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
+  plt.savefig(os.path.join(figures_output_path, 'graphs',f'VGG16_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
 
 
   preds = model.predict(test_ds, batch_size=batch_size, verbose='auto')
@@ -322,7 +326,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
 
-  with pd.ExcelWriter(os.path.join(csv_output_path,f'VGG16_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
+  with pd.ExcelWriter(os.path.join(csv_output_path,f'VGG16_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
                       mode='w') as writer:  
 
       f1_df.to_excel(writer, startrow=0)
@@ -331,6 +335,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
   #device.reset()
 
+  
   ###########
 
   # ResNet50
@@ -346,7 +351,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
   # Model Callbacks
-  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'ResNet50_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
+  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'ResNet50_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
     save_best_only=True) 
 
 
@@ -431,7 +436,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   plt.xlabel('epoch')
   plt.legend(['train', 'val','fine-tuning'], loc='lower right')
   plt.tight_layout()
-  plt.savefig(os.path.join(figures_output_path, 'graphs',f'ResNet50_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
+  plt.savefig(os.path.join(figures_output_path, 'graphs',f'ResNet50_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
 
 
   preds = model.predict(test_ds, batch_size=batch_size, verbose='auto')
@@ -453,7 +458,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
 
-  with pd.ExcelWriter(os.path.join(csv_output_path,f'ResNet50_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
+  with pd.ExcelWriter(os.path.join(csv_output_path,f'ResNet50_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
                       mode='w') as writer:  
 
       f1_df.to_excel(writer, startrow=0)
@@ -463,7 +468,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
   
-
+"""
 
 
   ###########
@@ -474,14 +479,14 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   ##########
 
 
-  
+  initializer = tf.keras.initializers.GlorotNormal()
 
   train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
 
 
 
   # Model Callbacks
-  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'Xception_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
+  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'Xception_reguant_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
     save_best_only=True) 
   base_model = tf.keras.applications.xception.Xception(weights='imagenet', include_top=False, input_shape=(img_height, img_width,3), pooling=False)
 
@@ -491,8 +496,8 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   x = tf.keras.applications.xception.preprocess_input(x)
   x = base_model(x)
   pool = tf.keras.layers.GlobalAveragePooling2D()(x)
-  fc1 = tf.keras.layers.Dense(1000, 'relu')(pool)
-  output = tf.keras.layers.Dense(n_classes, activation='softmax')(fc1)
+  fc1 = tf.keras.layers.Dense(1000, 'relu', kernel_initializer=initializer)(pool)
+  output = tf.keras.layers.Dense(n_classes, activation='softmax', kernel_initializer=initializer)(fc1)
   model=tf.keras.Model(inputs=inputs, outputs=output)
 
 
@@ -520,7 +525,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
   hist1 = pd.DataFrame(history.history)
   ## Allow fine tuning
-  for layer in base_model.layers[-3:]:
+  for layer in base_model.layers:
       layer.trainable=True
 
 
@@ -539,7 +544,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
     train_ds,
     validation_data=val_ds,
     epochs=epoch2,
-    callbacks=[checkpoint_cb, early_stopping_cb, lr_cb],
+    callbacks=[checkpoint_cb, lr_cb],
   )
   hist2 =  pd.DataFrame(history.history)
   hist2.index = hist2.index+epoch1
@@ -566,7 +571,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   plt.xlabel('epoch')
   plt.legend(['train', 'val','fine-tuning'], loc='lower right')
   plt.tight_layout()
-  plt.savefig(os.path.join(figures_output_path, 'graphs',f'Xception_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
+  plt.savefig(os.path.join(figures_output_path, 'graphs',f'Xception_reguant_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
 
 
   preds = model.predict(test_ds, batch_size=batch_size, verbose='auto')
@@ -588,14 +593,14 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
 
-  with pd.ExcelWriter(os.path.join(csv_output_path,f'Xception_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
+  with pd.ExcelWriter(os.path.join(csv_output_path,f'Xception_reguant_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
                       mode='w') as writer:  
 
       f1_df.to_excel(writer, startrow=0)
       cm_df.to_excel(writer, startrow=2)
       full_training_hist.to_excel(writer, sheet_name='model history')
 
-  """
+
 
 
   ###########
@@ -613,7 +618,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
   # Model Callbacks
-  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'MobileNet_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
+  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'MobileNet_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
     save_best_only=True) 
   base_model = tf.keras.applications.mobilenet.MobileNet(weights='imagenet', include_top=False, input_shape=(img_height, img_width,3), pooling=False)
 
@@ -698,7 +703,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   plt.xlabel('epoch')
   plt.legend(['train', 'val','fine-tuning'], loc='lower right')
   plt.tight_layout()
-  plt.savefig(os.path.join(figures_output_path, 'graphs',f'MobileNet_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
+  plt.savefig(os.path.join(figures_output_path, 'graphs',f'MobileNet_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
   plt.clf()
 
   preds = model.predict(test_ds, batch_size=batch_size, verbose='auto')
@@ -720,7 +725,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
 
-  with pd.ExcelWriter(os.path.join(csv_output_path,f'MobileNet_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
+  with pd.ExcelWriter(os.path.join(csv_output_path,f'MobileNet_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
                       mode='w') as writer:  
 
       f1_df.to_excel(writer, startrow=0)
@@ -743,7 +748,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
   # Model Callbacks
-  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'DenseNet121_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
+  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'DenseNet121_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
     save_best_only=True) 
   base_model = tf.keras.applications.DenseNet121(weights='imagenet', include_top=False, input_shape=(img_height, img_width,3), pooling=False)
 
@@ -827,7 +832,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   plt.xlabel('epoch')
   plt.legend(['train', 'val','fine-tuning'], loc='lower left')
   plt.tight_layout()
-  plt.savefig(os.path.join(figures_output_path, 'graphs',f'DenseNet121_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
+  plt.savefig(os.path.join(figures_output_path, 'graphs',f'DenseNet121_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
   plt.clf()
 
   preds = model.predict(test_ds, batch_size=batch_size, verbose='auto')
@@ -849,10 +854,10 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
 
-  with pd.ExcelWriter(os.path.join(csv_output_path,f'DenseNet121_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
+  with pd.ExcelWriter(os.path.join(csv_output_path,f'DenseNet121_cc_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
                       mode='w') as writer:  
 
       f1_df.to_excel(writer, startrow=0)
       cm_df.to_excel(writer, startrow=2)
       full_training_hist.to_excel(writer, sheet_name='model history')
-  
+  """

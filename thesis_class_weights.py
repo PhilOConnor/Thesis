@@ -56,10 +56,8 @@ if gpus:
 
 
 # Data parameters
-load_batch_size = 4
+load_batch_size = 8
 batch_size = 8
-load_img_height = 224
-load_img_width = 224
 img_height = 224
 img_width = 224
 n_classes=5
@@ -68,43 +66,91 @@ val_ds = tf.keras.utils.image_dataset_from_directory(
     val_data_path,
     shuffle=True,
     seed=123,
-    image_size=(load_img_height, load_img_width),
+    image_size=(img_height, img_width),
     batch_size=load_batch_size)
 
 test_ds = tf.keras.utils.image_dataset_from_directory(
   os.path.join(data_path,'test'),
   shuffle=True,
   seed=123,
-  image_size=(load_img_height, load_img_width),
+  image_size=(img_height, img_width),
   batch_size=load_batch_size)
 
+
+
+
+
 AUTOTUNE = tf.data.AUTOTUNE
-val_ds = val_ds.prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
 test_ds = test_ds.prefetch(buffer_size=AUTOTUNE)
 
+c0 = len(os.listdir(os.path.join(data_path, 'train','0')))
+c1 = len(os.listdir(os.path.join(data_path, 'train','1')))
+c2 = len(os.listdir(os.path.join(data_path, 'train','2')))
+c3 = len(os.listdir(os.path.join(data_path, 'train','3')))
+c4 = len(os.listdir(os.path.join(data_path, 'train','4')))
+
+total = c0+c1+c2+c3+c4
+
+weight_for_0 = (1 / c0) * (total / 2.0)
+weight_for_1 = (1 / c1) * (total / 2.0)
+weight_for_2 = (1 / c2) * (total / 2.0)
+weight_for_3 = (1 / c3) * (total / 2.0)
+weight_for_4 = (1 / c4) * (total / 2.0)
 
 
-for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_800, data_path_1000]):
+class_weight = {0: weight_for_0, 1: weight_for_1, 2: weight_for_2, 3: weight_for_3, 4: weight_for_4}
+
+
+
+for iter_lr, cw in itertools.product([0.001, 0.0001],['cw_fifth', 'cw_half']):
 
   # Model Parameters
   #learning_rate1 = 0.01
   learning_rate1 = iter_lr
   learning_rate2 = 0.0001
 
-  lr_sched_trigger=20
+  lr_sched_trigger=10
   epoch1 = 100
   epoch2 = 100
 
   # In[5]:
 
+  if cw == 'cw_fifth':
 
-  train_ds = tf.keras.utils.image_dataset_from_directory(
-    #data_path_200,
-    iter_path,
-    shuffle=True,
-    seed=123,
-    image_size=(load_img_height, load_img_width),
-    batch_size=load_batch_size)
+    
+
+
+
+    train_ds = tf.keras.utils.image_dataset_from_directory(
+      os.path.join(data_path,'train'),
+      validation_split=0.8,
+      subset='training',
+      shuffle=True,
+      seed=123,
+      image_size=(img_height, img_width),
+      batch_size=load_batch_size)
+  elif cw == 'cw_half':
+    train_ds = tf.keras.utils.image_dataset_from_directory(
+      os.path.join(data_path,'train'),
+      validation_split=0.5,
+      subset='training',
+      shuffle=True,
+      seed=123,
+      image_size=(img_height, img_width),
+      batch_size=load_batch_size)
+  elif cw == 'cw_full':
+    train_ds = tf.keras.utils.image_dataset_from_directory(
+      os.path.join(data_path,'train'),
+      shuffle=True,
+      seed=123,
+      image_size=(img_height, img_width),
+      batch_size=load_batch_size)#
+  else:
+    break
+
+
+
 
   
 
@@ -126,13 +172,13 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   def lr_scheduler(epoch, lr):
     if epoch<lr_sched_trigger:
       return lr
-    elif epoch%20 ==0 :
+    elif epoch%5 ==0 :
       lr= lr * tf.math.exp(-0.1)
       return lr
     else:
       return lr
 
-  
+
   optimizer1= tf.keras.optimizers.Adam(
       learning_rate=learning_rate1,
       beta_1=0.9,
@@ -146,26 +192,16 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
       beta_2=0.999,
       epsilon=1e-07
   )
-  """
-  optimizer1= tf.keras.optimizers.SGD(
-      learning_rate=learning_rate1,
-      momentum=0.9
-  )
 
-  optimizer2= tf.keras.optimizers.SGD(
-      learning_rate=learning_rate2,
-      momentum=0.9
-  )
-  """
 
-  early_stopping_cb = tf.keras.callbacks.EarlyStopping(patience=5,min_delta=0.001, start_from_epoch=10)
+
+  early_stopping_cb = tf.keras.callbacks.EarlyStopping(patience=5,min_delta=0.01, start_from_epoch=10)
   lr_cb = tf.keras.callbacks.LearningRateScheduler(
       lr_scheduler, verbose=0
   )
 
 
   data_augmentations = tf.keras.Sequential([
-    tf.keras.layers.CenterCrop(img_height, img_width),
     tf.keras.layers.RandomFlip(mode='horizontal'),
     tf.keras.layers.RandomRotation(0.2),
     tf.keras.layers.RandomContrast((0.01, 0.1))
@@ -179,181 +215,191 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
   ###########
 
-  
+
+  if iter_lr==0.01 and cw =='cw_fifth':
+    pass
+  else:
+    #train_ds = train_ds.map(preprocess).cache()
+    #val_ds = val_ds.map(preprocess).cache()
+    #test_ds = test_ds.map(preprocess)
+
+    base_model = tf.keras.applications.VGG16(weights='imagenet', input_shape=(224, 224, 3), include_top=False, pooling=False)
+    base_model.trainable = False
 
 
-  #train_ds = train_ds.map(preprocess).cache()
-  #val_ds = val_ds.map(preprocess).cache()
-  #test_ds = test_ds.map(preprocess)
+    
 
-  base_model = tf.keras.applications.VGG16(weights='imagenet', input_shape=(img_height, img_width, 3), include_top=False, pooling=False)
-  base_model.trainable = False
+    train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
+    
 
+    #train_ds = train_ds.map(preprocess).cache().prefetch(buffer_size=AUTOTUNE)
+    #val_ds = val_ds.map(preprocess).cache().prefetch(buffer_size=AUTOTUNE)
 
-  
-
-  train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
-  
-
-  #train_ds = train_ds.map(preprocess).cache().prefetch(buffer_size=AUTOTUNE)
-  #val_ds = val_ds.map(preprocess).cache().prefetch(buffer_size=AUTOTUNE)
-
-  #train_ds = train_ds.map(preprocess).prefetch(buffer_size=AUTOTUNE)
-  #val_ds = val_ds.map(preprocess).prefetch(buffer_size=AUTOTUNE)
-
-
-
-
-  # Model Callbacks
-  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'VGG16_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
-    save_best_only=True) 
-
-
-  
-
-
-  inputs = tf.keras.Input(shape=(load_img_height, load_img_width, 3))
-  x = data_augmentations(inputs)
-  x = tf.keras.applications.vgg16.preprocess_input(x)
-  x = base_model(x)
-  #flatten = tf.k.outputeras.layers.Flatten()(base_model.output)
-  pool = tf.keras.layers.GlobalAveragePooling2D()(x)
-  fc1 = tf.keras.layers.Dense(4096, 'relu')(pool)
-  fc2 = tf.keras.layers.Dense(4096, 'relu')(fc1)
-  output = tf.keras.layers.Dense(n_classes, 'softmax')(fc2)
-  model=tf.keras.Model(inputs=inputs, outputs=output)
-
-
-  # In[10]:
-
-
-  #for layer in base_model.layers:
-      #layer.trainable=False
-
-
-  # In[11]:
+    #train_ds = train_ds.map(preprocess).prefetch(buffer_size=AUTOTUNE)
+    #val_ds = val_ds.map(preprocess).prefetch(buffer_size=AUTOTUNE)
 
 
 
 
-  model.compile(
-    optimizer=optimizer1,
-    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-    metrics=['accuracy' ])
+    # Model Callbacks
+    checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path,'class weights', f'VGG16_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
+      save_best_only=True) 
 
 
-  # In[ ]:
+    
 
 
-  history = model.fit(
-    train_ds,
-    validation_data=val_ds,
-    epochs=epoch1,
-    callbacks=[checkpoint_cb, lr_cb]
-  )
-
-  hist1 = pd.DataFrame(history.history)
-  ## Allow fine tuning
-  for layer in base_model.layers[-3:]:
-      layer.trainable=True
-
+    inputs = tf.keras.Input(shape=(img_height, img_width, 3))
+    x = data_augmentations(inputs)
+    x = tf.keras.applications.vgg16.preprocess_input(x)
+    x = base_model(x)
+    #flatten = tf.k.outputeras.layers.Flatten()(base_model.output)
+    pool = tf.keras.layers.GlobalAveragePooling2D()(x)
+    fc1 = tf.keras.layers.Dense(4096, 'relu')(pool)
+    fc2 = tf.keras.layers.Dense(4096, 'relu')(fc1)
+    output = tf.keras.layers.Dense(n_classes, 'softmax')(fc2)
+    model=tf.keras.Model(inputs=inputs, outputs=output)
 
 
-
-  model.compile(
-    optimizer=optimizer2,
-    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-    metrics=['accuracy'])
+    # In[10]:
 
 
-  # In[ ]:
+    #for layer in base_model.layers:
+        #layer.trainable=False
 
 
-  history = model.fit(
-    train_ds,
-    validation_data=val_ds,
-    epochs=epoch2,
-    callbacks=[checkpoint_cb, early_stopping_cb, lr_cb],
-  )
-  hist2 =  pd.DataFrame(history.history)
-  hist2.index = hist2.index+epoch1
-  full_training_hist = pd.concat([hist1,hist2])
-  # In[ ]:
-
-
-  # summarize history for accuracy
-  plt.subplot(1,2,1)
-  plt.plot(full_training_hist['accuracy'])
-  plt.plot(full_training_hist['val_accuracy'])
-  plt.axvline(x = epoch1, color = 'b',linestyle='dashed', label = 'fine-tuning')
-  plt.title('model accuracy')
-  plt.ylabel('accuracy')
-  plt.xlabel('epoch')
-  plt.legend(['train', 'val','fine-tuning'], loc='lower right')
-  plt.subplot(1,2,2)
-  # summarize history for loss
-  plt.plot(full_training_hist['loss'])
-  plt.plot(full_training_hist['val_loss'])
-  plt.axvline(x = epoch1, color = 'b', linestyle='dashed', label = 'fine-tuning')
-  plt.title('model loss')
-  plt.ylabel('loss')
-  plt.xlabel('epoch')
-  plt.legend(['train', 'val','fine-tuning'], loc='lower right')
-  plt.tight_layout()
-  plt.savefig(os.path.join(figures_output_path, 'graphs',f'VGG16_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
-
-
-  preds = model.predict(test_ds, batch_size=batch_size, verbose='auto')
-  y = y = np.concatenate([y for x, y in test_ds], axis=0)
-  y_hat = preds.argmax(axis=1)
-  print(f"Sample output: {list(zip(y[:10], y_hat[:10]))}")
-
-  f1 = f1_score(y, y_hat, average='weighted')
-
-  cm = confusion_matrix(y, y_hat, labels=[0,1,2,3,4])
-
-  print(f"F1 score: {f1}")
-  print(f"Confusion Matrix: {cm}")
-  f1_df = pd.DataFrame(data={"F1 score":f1}, index=[0])
-  cm_df = pd.DataFrame(cm,columns = ['y_hat 0', 'y_hat 1','y_hat 2','y_hat 3','y_hat 4'])
+    # In[11]:
 
 
 
 
+    model.compile(
+      optimizer=optimizer1,
+      loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+      metrics=['accuracy' ])
 
 
-  with pd.ExcelWriter(os.path.join(csv_output_path,f'VGG16_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
-                      mode='w') as writer:  
+    # In[ ]:
 
-      f1_df.to_excel(writer, startrow=0)
-      cm_df.to_excel(writer, startrow=2)
-      full_training_hist.to_excel(writer, sheet_name='model history')
+
+    history = model.fit(
+      train_ds,
+      validation_data=val_ds,
+      epochs=epoch1,
+      callbacks=[checkpoint_cb, lr_cb],
+      class_weight=class_weight
+    )
+
+    hist1 = pd.DataFrame(history.history)
+    ## Allow fine tuning
+    for layer in base_model.layers[-3:]:
+        layer.trainable=True
+
+
+
+
+    model.compile(
+      optimizer=optimizer2,
+      loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+      metrics=['accuracy'])
+
+
+    # In[ ]:
+
+
+    history = model.fit(
+      train_ds,
+      validation_data=val_ds,
+      epochs=epoch2,
+      callbacks=[checkpoint_cb, early_stopping_cb, lr_cb],
+      class_weight=class_weight
+    )
+    hist2 =  pd.DataFrame(history.history)
+    hist2.index = hist2.index+epoch1
+    full_training_hist = pd.concat([hist1,hist2])
+    # In[ ]:
+
+
+    # summarize history for accuracy
+    plt.subplot(1,2,1)
+    plt.plot(full_training_hist['accuracy'])
+    plt.plot(full_training_hist['val_accuracy'])
+    plt.axvline(x = epoch1, color = 'b',linestyle='dashed', label = 'fine-tuning')
+    plt.title('model accuracy')
+    plt.ylabel('accuracy')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'val','fine-tuning'], loc='lower right')
+    plt.subplot(1,2,2)
+    # summarize history for loss
+    plt.plot(full_training_hist['loss'])
+    plt.plot(full_training_hist['val_loss'])
+    plt.axvline(x = epoch1, color = 'b', linestyle='dashed', label = 'fine-tuning')
+    plt.title('model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'val','fine-tuning'], loc='lower right')
+    plt.tight_layout()
+    plt.savefig(os.path.join(figures_output_path, 'graphs','class weights',f'VGG16_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
+
+
+    preds = model.predict(test_ds, batch_size=batch_size, verbose='auto')
+    y = y = np.concatenate([y for x, y in test_ds], axis=0)
+    y_hat = preds.argmax(axis=1)
+    print(f"Sample output: {list(zip(y[:10], y_hat[:10]))}")
+
+    f1 = f1_score(y, y_hat, average='weighted')
+
+    cm = confusion_matrix(y, y_hat, labels=[0,1,2,3,4])
+
+    print(f"F1 score: {f1}")
+    print(f"Confusion Matrix: {cm}")
+    f1_df = pd.DataFrame(data={"F1 score":f1}, index=[0])
+    cm_df = pd.DataFrame(cm,columns = ['y_hat 0', 'y_hat 1','y_hat 2','y_hat 3','y_hat 4'])
+
+
+
+
+
+
+    with pd.ExcelWriter(os.path.join(csv_output_path,'class weights',f'VGG16_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
+                        mode='w') as writer:  
+
+        f1_df.to_excel(writer, startrow=0)
+        cm_df.to_excel(writer, startrow=2)
+        full_training_hist.to_excel(writer, sheet_name='model history')
 
   #device.reset()
 
+  
   ###########
 
   # ResNet50
 
 
   ###########
+  optimizer1= tf.keras.optimizers.Adam(
+      learning_rate=learning_rate1,
+      beta_1=0.9,
+      beta_2=0.999,
+      epsilon=1e-07
+  )
 
- 
-
-
-  train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
-
-
+  optimizer2= tf.keras.optimizers.Adam(
+      learning_rate=learning_rate2,
+      beta_1=0.9,
+      beta_2=0.999,
+      epsilon=1e-07
+  )
 
   # Model Callbacks
-  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'ResNet50_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
+  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path,'class weights', f'ResNet50_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
     save_best_only=True) 
 
 
   base_model = tf.keras.applications.ResNet50(weights='imagenet', include_top=False, input_shape=(img_height, img_width,3), pooling=False)
 
 
-  inputs = tf.keras.Input(shape=(load_img_height, load_img_width, 3))
+  inputs = tf.keras.Input(shape=(img_height, img_width, 3))
   x = data_augmentations(inputs)
   x = tf.keras.applications.resnet50.preprocess_input(x)
   x = base_model(x)
@@ -380,7 +426,8 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
     train_ds,
     validation_data=val_ds,
     epochs=epoch1,
-    callbacks=[checkpoint_cb, lr_cb]
+    callbacks=[checkpoint_cb, lr_cb],
+    class_weight=class_weight
   )
 
   hist1 = pd.DataFrame(history.history)
@@ -405,6 +452,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
     validation_data=val_ds,
     epochs=epoch2,
     callbacks=[checkpoint_cb, early_stopping_cb, lr_cb],
+    class_weight=class_weight
   )
   hist2 =  pd.DataFrame(history.history)
   hist2.index = hist2.index+epoch1
@@ -431,7 +479,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   plt.xlabel('epoch')
   plt.legend(['train', 'val','fine-tuning'], loc='lower right')
   plt.tight_layout()
-  plt.savefig(os.path.join(figures_output_path, 'graphs',f'ResNet50_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
+  plt.savefig(os.path.join(figures_output_path, 'graphs','class weights',f'ResNet50_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
 
 
   preds = model.predict(test_ds, batch_size=batch_size, verbose='auto')
@@ -453,7 +501,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
 
-  with pd.ExcelWriter(os.path.join(csv_output_path,f'ResNet50_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
+  with pd.ExcelWriter(os.path.join(csv_output_path,'class weights',f'ResNet50_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
                       mode='w') as writer:  
 
       f1_df.to_excel(writer, startrow=0)
@@ -462,7 +510,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
 
-  
+ 
 
 
 
@@ -474,19 +522,31 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   ##########
 
 
-  
+ 
 
-  train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
+  optimizer1= tf.keras.optimizers.Adam(
+      learning_rate=learning_rate1,
+      beta_1=0.9,
+      beta_2=0.999,
+      epsilon=1e-07
+  )
+
+  optimizer2= tf.keras.optimizers.Adam(
+      learning_rate=learning_rate2,
+      beta_1=0.9,
+      beta_2=0.999,
+      epsilon=1e-07
+  )
 
 
 
   # Model Callbacks
-  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'Xception_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
+  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path,'class weights', f'Xception_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
     save_best_only=True) 
   base_model = tf.keras.applications.xception.Xception(weights='imagenet', include_top=False, input_shape=(img_height, img_width,3), pooling=False)
 
 
-  inputs = tf.keras.Input(shape=(load_img_height, load_img_width, 3))
+  inputs = tf.keras.Input(shape=(img_height, img_width, 3))
   x = data_augmentations(inputs)
   x = tf.keras.applications.xception.preprocess_input(x)
   x = base_model(x)
@@ -515,7 +575,8 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
     train_ds,
     validation_data=val_ds,
     epochs=epoch1,
-    callbacks=[checkpoint_cb, lr_cb]
+    callbacks=[checkpoint_cb, lr_cb],
+    class_weight=class_weight
   )
 
   hist1 = pd.DataFrame(history.history)
@@ -540,6 +601,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
     validation_data=val_ds,
     epochs=epoch2,
     callbacks=[checkpoint_cb, early_stopping_cb, lr_cb],
+    class_weight=class_weight
   )
   hist2 =  pd.DataFrame(history.history)
   hist2.index = hist2.index+epoch1
@@ -566,7 +628,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   plt.xlabel('epoch')
   plt.legend(['train', 'val','fine-tuning'], loc='lower right')
   plt.tight_layout()
-  plt.savefig(os.path.join(figures_output_path, 'graphs',f'Xception_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
+  plt.savefig(os.path.join(figures_output_path, 'graphs','class weights',f'Xception_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
 
 
   preds = model.predict(test_ds, batch_size=batch_size, verbose='auto')
@@ -588,14 +650,14 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
 
-  with pd.ExcelWriter(os.path.join(csv_output_path,f'Xception_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
+  with pd.ExcelWriter(os.path.join(csv_output_path,'class weights',f'Xception_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
                       mode='w') as writer:  
 
       f1_df.to_excel(writer, startrow=0)
       cm_df.to_excel(writer, startrow=2)
       full_training_hist.to_excel(writer, sheet_name='model history')
 
-  """
+
 
 
   ###########
@@ -605,20 +667,27 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   """
   ##########
 
+  optimizer1= tf.keras.optimizers.Adam(
+      learning_rate=learning_rate1,
+      beta_1=0.9,
+      beta_2=0.999,
+      epsilon=1e-07
+  )
 
-
-  """
-  train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
-
-
+  optimizer2= tf.keras.optimizers.Adam(
+      learning_rate=learning_rate2,
+      beta_1=0.9,
+      beta_2=0.999,
+      epsilon=1e-07
+  )
 
   # Model Callbacks
-  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'MobileNet_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
+  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path,'class weights', f'MobileNet_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
     save_best_only=True) 
   base_model = tf.keras.applications.mobilenet.MobileNet(weights='imagenet', include_top=False, input_shape=(img_height, img_width,3), pooling=False)
 
 
-  inputs = tf.keras.Input(shape=(load_img_height, load_img_width, 3))
+  inputs = tf.keras.Input(shape=(img_height, img_width, 3))
   x = data_augmentations(inputs)
   x = tf.keras.applications.mobilenet.preprocess_input(x)
   x = base_model(x)
@@ -647,7 +716,8 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
     train_ds,
     validation_data=val_ds,
     epochs=epoch1,
-    callbacks=[checkpoint_cb, lr_cb]
+    callbacks=[checkpoint_cb, lr_cb],
+    class_weight=class_weight
   )
 
   hist1 = pd.DataFrame(history.history)
@@ -672,6 +742,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
     validation_data=val_ds,
     epochs=epoch2,
     callbacks=[checkpoint_cb, early_stopping_cb, lr_cb],
+    class_weight=class_weight
   )
   hist2 =  pd.DataFrame(history.history)
   hist2.index = hist2.index+epoch1
@@ -698,7 +769,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   plt.xlabel('epoch')
   plt.legend(['train', 'val','fine-tuning'], loc='lower right')
   plt.tight_layout()
-  plt.savefig(os.path.join(figures_output_path, 'graphs',f'MobileNet_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
+  plt.savefig(os.path.join(figures_output_path, 'graphs','class weights',f'MobileNet_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
   plt.clf()
 
   preds = model.predict(test_ds, batch_size=batch_size, verbose='auto')
@@ -720,14 +791,14 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
 
-  with pd.ExcelWriter(os.path.join(csv_output_path,f'MobileNet_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
+  with pd.ExcelWriter(os.path.join(csv_output_path,'class weights',f'MobileNet_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
                       mode='w') as writer:  
 
       f1_df.to_excel(writer, startrow=0)
       cm_df.to_excel(writer, startrow=2)
       full_training_hist.to_excel(writer, sheet_name='model history')
 
-  
+
   ###########
   """
   #DenseNet121
@@ -736,19 +807,27 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   ##########
 
 
+  optimizer1= tf.keras.optimizers.Adam(
+      learning_rate=learning_rate1,
+      beta_1=0.9,
+      beta_2=0.999,
+      epsilon=1e-07
+  )
 
-
-  train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
-
-
+  optimizer2= tf.keras.optimizers.Adam(
+      learning_rate=learning_rate2,
+      beta_1=0.9,
+      beta_2=0.999,
+      epsilon=1e-07
+  )
 
   # Model Callbacks
-  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, f'DenseNet121_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
+  checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(os.path.join(models_output_path, 'class weights',f'DenseNet121_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.h5'),
     save_best_only=True) 
   base_model = tf.keras.applications.DenseNet121(weights='imagenet', include_top=False, input_shape=(img_height, img_width,3), pooling=False)
 
 
-  inputs = tf.keras.Input(shape=(load_img_height, load_img_width, 3))
+  inputs = tf.keras.Input(shape=(img_height, img_width, 3))
   x = data_augmentations(inputs)
   x = tf.keras.applications.densenet.preprocess_input(x)
   x = base_model(x)
@@ -776,7 +855,8 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
     train_ds,
     validation_data=val_ds,
     epochs=epoch1,
-    callbacks=[checkpoint_cb, lr_cb]
+    callbacks=[checkpoint_cb, lr_cb],
+    class_weight=class_weight
   )
 
   hist1 = pd.DataFrame(history.history)
@@ -801,6 +881,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
     validation_data=val_ds,
     epochs=epoch2,
     callbacks=[checkpoint_cb, early_stopping_cb, lr_cb],
+    class_weight=class_weight
   )
   hist2 =  pd.DataFrame(history.history)
   hist2.index = hist2.index+epoch1
@@ -827,7 +908,7 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
   plt.xlabel('epoch')
   plt.legend(['train', 'val','fine-tuning'], loc='lower left')
   plt.tight_layout()
-  plt.savefig(os.path.join(figures_output_path, 'graphs',f'DenseNet121_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
+  plt.savefig(os.path.join(figures_output_path, 'graphs','class weights',f'DenseNet121_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.jpg'))
   plt.clf()
 
   preds = model.predict(test_ds, batch_size=batch_size, verbose='auto')
@@ -849,10 +930,9 @@ for iter_lr, iter_path in itertools.product([0.1,], [data_path_200, data_path_80
 
 
 
-  with pd.ExcelWriter(os.path.join(csv_output_path,f'DenseNet121_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
+  with pd.ExcelWriter(os.path.join(csv_output_path,'class weights',f'DenseNet121_{train_ds.cardinality().numpy()*batch_size/5}_{learning_rate1}.xlsx'),
                       mode='w') as writer:  
 
       f1_df.to_excel(writer, startrow=0)
       cm_df.to_excel(writer, startrow=2)
       full_training_hist.to_excel(writer, sheet_name='model history')
-  
